@@ -22,3 +22,8 @@ build/
 
 # Upload folder
 uploads/
+# API test temp files
+.api_smoke_state.json
+
+test-results/
+playwright-report/

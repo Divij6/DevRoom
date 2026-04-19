@@ -27,16 +27,56 @@ export default function RoomWorkspace() {
   const { toast, ToastContainer } = useToast();
   const socketRef = useRef(null);
   const [remoteUsers, setRemoteUsers] = useState([]);
+  const currentUserId = user?._id || user?.id || null;
+  const currentUserName = user?.name || 'User';
   // React Flow only
 
   useEffect(() => {
-    if (!activeRoom || !user) return;
+    if (!activeRoom || !currentUserId) {
+      if (activeRoom && !currentUserId) {
+        console.warn('Workspace socket skipped because userId is missing', {
+          roomId: activeRoom._id,
+          user,
+        });
+      }
+      return;
+    }
 
     const socket = io(SOCKET_URL, { transports: ['websocket'], withCredentials: true });
     socketRef.current = socket;
 
     socket.on('connect', () => {
-      socket.emit('presence-join', { userId: user._id, roomId: activeRoom._id, userName: user.name });
+      console.log('Workspace socket connected', {
+        socketId: socket.id,
+        roomId: activeRoom._id,
+        userId: currentUserId,
+      });
+
+      if (!currentUserId) {
+        console.warn('Skipping workspace presence-join because userId is missing', {
+          roomId: activeRoom._id,
+          user,
+        });
+        return;
+      }
+
+      socket.emit('presence-join', {
+        userId: currentUserId,
+        roomId: activeRoom._id,
+        userName: currentUserName,
+      });
+    });
+
+    socket.on('connect_error', (error) => {
+      console.error('Workspace socket connect_error', {
+        message: error?.message,
+        roomId: activeRoom._id,
+        userId: currentUserId,
+      });
+    });
+
+    socket.on('error', (error) => {
+      console.error('Workspace socket error', error);
     });
 
     socket.on('presence-update', (users = []) => {
@@ -44,11 +84,17 @@ export default function RoomWorkspace() {
     });
 
     return () => {
-      try { socket.disconnect(); } catch (e) {}
+      console.log('Workspace socket disconnect requested', {
+        roomId: activeRoom._id,
+        userId: currentUserId,
+      });
+      try { socket.disconnect(); } catch (error) {
+        console.warn('Failed to disconnect workspace socket cleanly', error);
+      }
       socketRef.current = null;
       setRemoteUsers([]);
     };
-  }, [activeRoom, user]);
+  }, [activeRoom, currentUserId, currentUserName, user]);
 
   if (!activeRoom) {
     return <LandingPage />;
@@ -93,7 +139,7 @@ export default function RoomWorkspace() {
       {/* Content */}
       <div style={styles.content}>
         {activeTab === 'canvas' && (
-          <ReactFlowCanvas roomId={activeRoom._id} userId={user?._id} onToast={toast} />
+          <ReactFlowCanvas roomId={activeRoom._id} userId={currentUserId} onToast={toast} />
         )}
         {activeTab === 'overview' && (
           <div style={styles.scrollable}>
@@ -142,7 +188,9 @@ const styles = {
     padding: '10px 14px', fontSize: 13, cursor: 'pointer',
     color: 'var(--text-secondary)',
     background: 'none', border: 'none', outline: 'none',
-    borderBottom: '2px solid transparent',
+    borderBottomWidth: 2,
+    borderBottomStyle: 'solid',
+    borderBottomColor: 'transparent',
     transition: 'color var(--t-base), border-color var(--t-base)',
     fontFamily: 'var(--font-sans)', fontWeight: 400,
     whiteSpace: 'nowrap',

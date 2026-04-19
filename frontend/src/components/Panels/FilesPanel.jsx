@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
-import { deleteFile, getFiles, getFileVersions, uploadFile, getNodes, linkFileToNode } from '../../services/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  deleteFile,
+  getFiles,
+  getFileVersions,
+  uploadFile,
+  getNodes,
+  linkFileToNode,
+  getFileContent,
+  getFileLink,
+  updateFileContent,
+} from '../../services/api';
 import { useAuth } from '../../context/AuthContext';
+import FileEditorModal from './FileEditorModal';
 
 const FILE_ICONS = {
   ts: 'FILE',
@@ -56,10 +67,40 @@ export default function FilesPanel({ roomId, onToast }) {
   const [candidate, setCandidate] = useState(null);
   const [nodesForLink, setNodesForLink] = useState([]);
   const [selectedNodeForLink, setSelectedNodeForLink] = useState('none');
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
+  const [viewerSaving, setViewerSaving] = useState(false);
+  const [activeFile, setActiveFile] = useState(null);
 
   const currentUserId = user?._id || user?.id;
+  const resolveFileContent = useCallback((payload) => (
+    payload?.content
+    ?? payload?.file?.content
+    ?? payload?.file?.fileContent
+    ?? payload?.fileContent
+    ?? ''
+  ), []);
 
-  const loadFiles = async () => {
+  const loadViewerFile = useCallback(async (fileId, fallbackFile = {}) => {
+    const [metaRes, contentRes, versionsRes] = await Promise.all([
+      getFileLink(fileId),
+      getFileContent(fileId),
+      getFileVersions(fileId),
+    ]);
+
+    const resolvedContent = resolveFileContent(contentRes.data);
+
+    return {
+      ...fallbackFile,
+      ...metaRes.data,
+      _id: metaRes.data?.fileId || fallbackFile._id || fileId,
+      content: resolvedContent,
+      updatedAt: metaRes.data?.updatedAt ?? contentRes.data?.updatedAt ?? fallbackFile.updatedAt,
+      versions: Array.isArray(versionsRes.data) ? versionsRes.data : [],
+    };
+  }, [resolveFileContent]);
+
+  const loadFiles = useCallback(async () => {
     if (!roomId) {
       setFiles([]);
       setLoading(false);
@@ -77,11 +118,11 @@ export default function FilesPanel({ roomId, onToast }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [onToast, roomId, search]);
 
   useEffect(() => {
     loadFiles();
-  }, [roomId, search]);
+  }, [loadFiles]);
 
   const handleUpload = async (e) => {
     const file = e.target.files?.[0];
@@ -96,13 +137,13 @@ export default function FilesPanel({ roomId, onToast }) {
       try {
         const res = await getNodes(roomId);
         setNodesForLink(Array.isArray(res.data) ? res.data : res.data || []);
-      } catch (err) {
+      } catch {
         setNodesForLink([]);
       }
 
       setSelectedNodeForLink('none');
       setShowLinkModal(true);
-    } catch (err) {
+    } catch {
       onToast?.('Failed to read file', 'error');
     } finally {
       if (fileInputRef.current) fileInputRef.current.value = '';
@@ -127,7 +168,7 @@ export default function FilesPanel({ roomId, onToast }) {
       if (selectedNodeForLink && selectedNodeForLink !== 'none' && uploadedFile) {
         try {
           await linkFileToNode({ nodeId: selectedNodeForLink, fileId: uploadedFile._id, linkedBy: currentUserId, roomId });
-        } catch (err) {
+        } catch {
           // ignore linking errors
         }
       }
@@ -173,6 +214,54 @@ export default function FilesPanel({ roomId, onToast }) {
       await loadFiles();
     } catch (error) {
       onToast?.(error.response?.data?.message || 'Delete failed', 'error');
+    }
+  };
+
+  const handleOpenFile = async (file) => {
+    setViewerOpen(true);
+    setViewerLoading(true);
+    setActiveFile({
+      ...file,
+      content: file.fileContent || '',
+    });
+
+    try {
+      const openedFile = await loadViewerFile(file._id, file);
+      console.debug('Opened file details', {
+        fileId: file._id,
+        fileName: file.fileName,
+        contentLength: openedFile.content.length,
+      });
+      setActiveFile(openedFile);
+    } catch (error) {
+      onToast?.(error.response?.data?.message || 'Failed to open file', 'error');
+      setViewerOpen(false);
+    } finally {
+      setViewerLoading(false);
+    }
+  };
+
+  const handleSaveFile = async ({ content, changeNote }) => {
+    if (!activeFile?._id || !currentUserId) return;
+
+    setViewerSaving(true);
+
+    try {
+      await updateFileContent(activeFile._id, {
+        fileContent: content,
+        uploadedBy: currentUserId,
+        changeNote: changeNote || undefined,
+      });
+
+      const refreshedFile = await loadViewerFile(activeFile._id, activeFile);
+      setActiveFile(refreshedFile);
+      onToast?.('File updated', 'success');
+      await loadFiles();
+    } catch (error) {
+      onToast?.(error.response?.data?.message || 'Failed to save file', 'error');
+      throw error;
+    } finally {
+      setViewerSaving(false);
     }
   };
 
@@ -231,6 +320,13 @@ export default function FilesPanel({ roomId, onToast }) {
                 </div>
               </div>
               <div style={styles.fileActions}>
+                <button
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => handleOpenFile(file)}
+                  title="View or edit file"
+                >
+                  Open
+                </button>
                 <button
                   className="btn btn-ghost btn-sm"
                   onClick={() => handleViewVersions(file)}
@@ -315,6 +411,20 @@ export default function FilesPanel({ roomId, onToast }) {
           </div>
         </div>
       )}
+
+      <FileEditorModal
+        key={`${activeFile?._id || 'file'}-${activeFile?.updatedAt || activeFile?.content?.length || 0}`}
+        open={viewerOpen}
+        file={activeFile}
+        loading={viewerLoading}
+        saving={viewerSaving}
+        allowEdit
+        onClose={() => {
+          setViewerOpen(false);
+          setActiveFile(null);
+        }}
+        onSave={handleSaveFile}
+      />
     </div>
   );
 }

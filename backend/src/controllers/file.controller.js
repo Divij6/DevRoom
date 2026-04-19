@@ -50,6 +50,7 @@ async function buildRoomFiles(roomId, search) {
         fileType: file.fileType,
         fileSize: file.fileSize,
         filePath: file.filePath,
+        fileContent: file.fileContent || '',
         uploadedBy: file.uploadedBy,
         createdAt: file.createdAt,
         updatedAt: file.updatedAt,
@@ -64,7 +65,7 @@ export const uploadFile = async (req, res) => {
   try {
     const { fileName, fileContent, roomId, uploadedBy, changeNote } = req.body;
 
-    if (!fileName || !fileContent || !roomId || !uploadedBy) {
+    if (!fileName || fileContent === undefined || fileContent === null || !roomId || !uploadedBy) {
       return res.status(400).json({
         message: 'fileName, fileContent, roomId and uploadedBy are all required',
       });
@@ -91,12 +92,14 @@ export const uploadFile = async (req, res) => {
         fileId: existingFile._id,
         versionNumber,
         filePath,
+        fileContent,
         uploadedBy,
         changeNote: changeNote || `Version ${versionNumber}`,
       });
 
       existingFile.filePath = filePath;
       existingFile.fileSize = fileSize;
+      existingFile.fileContent = fileContent;
       await existingFile.save();
 
       return res.status(200).json({
@@ -112,6 +115,7 @@ export const uploadFile = async (req, res) => {
       fileType,
       fileSize,
       filePath,
+      fileContent,
       uploadedBy,
       isDeleted: false,
     });
@@ -120,6 +124,7 @@ export const uploadFile = async (req, res) => {
       fileId: file._id,
       versionNumber: 1,
       filePath,
+      fileContent,
       uploadedBy,
       changeNote: changeNote || 'Initial upload',
     });
@@ -180,7 +185,7 @@ export const createFileVersion = async (req, res) => {
     const { fileId } = req.params;
     const { fileContent, uploadedBy, changeNote } = req.body;
 
-    if (!fileContent || !uploadedBy) {
+    if ((fileContent === undefined || fileContent === null) || !uploadedBy) {
       return res.status(400).json({
         message: 'fileContent and uploadedBy are required',
       });
@@ -201,12 +206,14 @@ export const createFileVersion = async (req, res) => {
       fileId,
       versionNumber,
       filePath,
+      fileContent,
       uploadedBy,
       changeNote: changeNote || `Version ${versionNumber}`,
     });
 
     file.filePath = filePath;
     file.fileSize = fileSize;
+    file.fileContent = fileContent;
     await file.save();
 
     return res.status(201).json({
@@ -259,10 +266,51 @@ export const downloadFile = async (req, res) => {
       .sort({ versionNumber: -1 })
       .populate('uploadedBy', 'name email');
 
+    const resolvedContent = file.fileContent || versions[0]?.fileContent || '';
+    console.log('downloadFile resolved content', {
+      fileId,
+      fileName: file.fileName,
+      contentLength: resolvedContent.length,
+    });
+
     return res.status(200).json({
-      file,
+      file: {
+        ...file.toObject(),
+        fileContent: resolvedContent,
+      },
+      content: resolvedContent,
       versions,
       totalVersions: versions.length,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      message: error.message || 'Server error',
+    });
+  }
+};
+
+export const getFileContent = async (req, res) => {
+  try {
+    const { fileId } = req.params;
+
+    const file = await File.findOne({ _id: fileId, isDeleted: false });
+
+    if (!file) {
+      return res.status(404).json({ message: 'File not found' });
+    }
+
+    const latestVersion = await FileVersion.findOne({ fileId: file._id })
+      .sort({ versionNumber: -1 })
+      .select('fileContent');
+
+    const resolvedContent = file.fileContent || latestVersion?.fileContent || '';
+
+    return res.status(200).json({
+      fileId: file._id,
+      fileName: file.fileName,
+      fileType: file.fileType,
+      updatedAt: file.updatedAt,
+      content: resolvedContent,
     });
   } catch (error) {
     return res.status(500).json({
@@ -288,6 +336,9 @@ export const getFileLink = async (req, res) => {
       fileName: file.fileName,
       fileType: file.fileType,
       fileSize: file.fileSize,
+      createdAt: file.createdAt,
+      updatedAt: file.updatedAt,
+      fileContent: file.fileContent || '',
       fileUrl: `${baseUrl}/api/files/download/${file._id}`,
     });
   } catch (error) {

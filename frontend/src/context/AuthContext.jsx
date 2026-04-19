@@ -1,8 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useState } from 'react';
 import {
   clearStoredToken,
-  getMe,
-  getStoredToken,
   login as apiLogin,
   logout as apiLogout,
   register as apiRegister,
@@ -11,19 +9,31 @@ import {
 
 const AuthContext = createContext(null);
 
+function normalizeAuthUser(user) {
+  if (!user) return null;
+
+  const normalizedId = user._id || user.id || null;
+
+  return {
+    ...user,
+    _id: normalizedId,
+    id: normalizedId,
+  };
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   // Do not auto-login on app start. The app will show the login screen
   // and the user should explicitly sign in. This avoids unexpected
   // automatic redirects when a token is present in localStorage
   // (e.g. leftover test tokens).
-  const [loading, setLoading] = useState(false);
+  const [loading] = useState(false);
 
   const login = useCallback(async (email, password) => {
     const res = await apiLogin({ email, password });
 
     setStoredToken(res.data.token);
-    setUser(res.data.user);
+    setUser(normalizeAuthUser(res.data.user));
 
     return res.data;
   }, []);

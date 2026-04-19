@@ -70,14 +70,16 @@ export const deleteNote = (noteId) => apiClient.delete(`/notes/${noteId}`);
 export const uploadFile = (data) => apiClient.post('/files/upload', data);
 export const getFiles = (roomId, search = '') =>
   apiClient
-    .get(`/files/${roomId}${search ? `?search=${search}` : ''}`)
+    .get(`/files/room/${roomId}${search ? `?search=${search}` : ''}`)
     .then((res) => ({ ...res, data: res.data?.files || [] }));
 export const createFileVersion = (fileId, data) => apiClient.post(`/files/${fileId}/version`, data);
 export const getFileVersions = (fileId) =>
   apiClient.get(`/files/${fileId}/versions`).then((res) => ({ ...res, data: res.data?.versions || [] }));
 export const getFileLink = (fileId) => apiClient.get(`/files/link/${fileId}`);
+export const getFileContent = (fileId) => apiClient.get(`/files/${fileId}`);
 export const downloadFile = (fileId) => apiClient.get(`/files/download/${fileId}`);
 export const deleteFile = (fileId) => apiClient.delete(`/files/${fileId}`);
+export const updateFileContent = (fileId, data) => apiClient.post(`/files/${fileId}/version`, data);
 
 export const linkFileToNode = (data) => apiClient.post('/files/link', data);
 export const getNodeFiles = (nodeId) => apiClient.get(`/files/node/${nodeId}`);
