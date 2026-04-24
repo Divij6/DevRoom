@@ -1,358 +1,545 @@
 # DevRoom
 
-DevRoom is a collaborative whiteboard and file-sharing workspace built with a Node/Express/Mongo backend and a React/Vite frontend. It supports editable nodes, connections (edges), sticky notes, file uploads and file-to-node linking, presence/cursors, and history logging. The project includes two canvas implementations: a legacy tldraw-based canvas and a React Flow prototype used for migration.
+DevRoom is a collaborative software-planning workspace where teams can create rooms, sketch system architecture on a shared canvas, connect components, add notes, attach files to nodes, manage collaborators, and review activity history. The project uses a React + Vite frontend, a Node.js + Express backend, MongoDB for persistence, and Socket.IO for realtime collaboration.
 
-This README documents the whole project: backend APIs, database schemas, controllers and routes, frontend structure and components, realtime/socket events, development setup, and example payloads.
+## What This Project Does
 
----
+DevRoom is designed for software teams that want one place to:
 
-**Table of Contents**
+- create shared project rooms
+- build architecture diagrams with draggable nodes and edges
+- add sticky notes for design discussion
+- upload text-based project files and keep version history
+- link files to specific architecture nodes
+- invite collaborators with room roles
+- see live user presence and remote cursors
+- review room activity through a history panel
 
-- Project overview
-- Architecture
-- Getting started
-- Backend
-  - Models / Schemas
-  - Controllers & Routes (APIs)
-  - Canvas save/load mapping and behavior
-  - Files & File linking
-  - History
-  - Authentication
-- Frontend
-  - Project structure
-  - Key components and behavior
-  - Services / API client
-  - Canvas behaviors (React Flow)
-- Realtime (Socket.IO) events
-- Example requests & payloads
-- Troubleshooting & notes
-- Next steps / TODO
+## Main Features
 
----
+- JWT-based authentication
+- room creation, listing, update, and archive flow
+- role-based room membership (`owner`, `editor`, `viewer`)
+- React Flow-based collaborative canvas
+- node, edge, and note persistence in MongoDB
+- file upload using stored text content plus file versioning
+- file-to-node linking
+- Socket.IO presence, cursor sharing, and live canvas event broadcast
+- activity logging through `HistoryLog`
 
-**Project Overview**
+## Tech Stack
 
-DevRoom provides shared rooms where collaborators can add architecture nodes, connect them with edges, drop sticky notes, upload and link files to nodes, and see real-time cursors and presence. Data is persisted to MongoDB and history logs are recorded for important actions.
+### Frontend
 
-**Architecture**
+- React 19
+- Vite 8
+- React Flow
+- Axios
+- Socket.IO Client
+- Lucide React
 
-- Backend: Node.js, Express, Mongoose (MongoDB), Socket.IO. Single service (run on PORT 5002 by default).
-- Frontend: React (Vite), React Flow prototype and legacy tldraw canvas. Socket.IO client for presence and realtime events. Axios-based API client.
+### Backend
 
-Default ports used in development:
-- Backend: `http://localhost:5002`
-- Frontend (Vite): `http://localhost:5173` (dev)
+- Node.js
+- Express 5
+- MongoDB with Mongoose
+- Socket.IO
+- JWT
+- bcryptjs
+- CORS
+- dotenv
 
-Environment variables (minimum):
-- `MONGO_URI` — MongoDB connection string
-- `JWT_SECRET` — JSON Web Token signing secret (used by authentication middleware)
-- `PORT` — optional backend port (defaults to 5002)
+### Dev and Test Utilities
 
+- Playwright
+- nodemon
 
-**Getting started (dev)**
+## Architecture Overview
 
-1. Backend
+```text
++-------------------+         HTTP / REST          +----------------------+
+| React + Vite UI   | ---------------------------> | Express API Server   |
+| React Flow Canvas |                              | Auth, Rooms, Canvas  |
+| Files + Members   | <--------------------------- | Files, History       |
++---------+---------+         JSON responses       +----------+-----------+
+          |                                                        |
+          | Socket.IO                                              |
+          v                                                        v
++-------------------+                                   +------------------+
+| Realtime Clients  | <-------------------------------> | MongoDB          |
+| Presence, Cursor  |                                   | App persistence  |
+| Canvas Sync       |                                   | and history      |
++-------------------+                                   +------------------+
+```
+
+## Repository Structure
+
+```text
+DevRoom/
+|-- backend/
+|   |-- package.json
+|   `-- src/
+|       |-- config/
+|       |-- controllers/
+|       |-- middleware/
+|       |-- models/
+|       |-- routes/
+|       `-- server.js
+|-- frontend/
+|   |-- package.json
+|   |-- public/
+|   `-- src/
+|       |-- components/
+|       |-- context/
+|       |-- hooks/
+|       |-- services/
+|       `-- templates/
+|-- scripts/
+|-- APIs/
+|-- README.md
+`-- DevRoom_IEEE_Paper.tex
+```
+
+## Important Files
+
+### Backend
+
+- `backend/src/server.js`: server bootstrap, route mounting, Socket.IO setup
+- `backend/src/config/db.js`: MongoDB connection
+- `backend/src/controllers/`: request handlers
+- `backend/src/routes/`: API route definitions
+- `backend/src/models/`: Mongoose schemas
+- `backend/src/middleware/authMiddleware.js`: JWT verification
+
+### Frontend
+
+- `frontend/src/App.jsx`: top-level application flow
+- `frontend/src/context/AuthContext.jsx`: login, register, logout state
+- `frontend/src/context/RoomContext.jsx`: room list and active room state
+- `frontend/src/services/api.js`: Axios clients and API wrappers
+- `frontend/src/components/Layout/RoomWorkspace.jsx`: main workspace shell
+- `frontend/src/components/Canvas/ReactFlowCanvas.jsx`: active canvas implementation
+- `frontend/src/components/Panels/FilesPanel.jsx`: file management
+- `frontend/src/components/Panels/MembersPanel.jsx`: collaborator management
+- `frontend/src/components/Panels/HistoryPanel.jsx`: room activity timeline
+- `frontend/src/templates/nodeTemplates.js`: available node template types
+
+## Data Model Summary
+
+| Model | Purpose | Key Fields |
+| --- | --- | --- |
+| `User` | platform users | `name`, `email`, `passwordHash`, `profileImage`, `status` |
+| `Room` | shared workspace metadata | `name`, `description`, `createdBy`, `isArchived` |
+| `RoomMember` | room membership and role | `roomId`, `userId`, `role`, `joinedAt` |
+| `CanvasNode` | architecture blocks on canvas | `roomId`, `title`, `type`, `position`, `width`, `height`, `createdBy` |
+| `CanvasEdge` | node-to-node connections | `roomId`, `sourceNodeId`, `targetNodeId`, `createdBy` |
+| `CanvasNote` | sticky notes on canvas | `roomId`, `text`, `position`, `createdBy` |
+| `File` | latest file snapshot | `roomId`, `fileName`, `fileType`, `fileSize`, `filePath`, `fileContent`, `uploadedBy`, `isDeleted` |
+| `FileVersion` | saved revisions of a file | `fileId`, `versionNumber`, `filePath`, `fileContent`, `uploadedBy`, `changeNote` |
+| `FileNodeLink` | relation between file and node | `nodeId`, `fileId`, `linkedBy` |
+| `HistoryLog` | room activity trail | `roomId`, `userId`, `actionType`, `message`, `entityId` |
+
+## API Summary
+
+All backend APIs run from the Node server on `http://localhost:5002`.
+
+### Auth Routes
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/register` | No | register a new user |
+| `POST` | `/api/login` | No | login and receive JWT |
+| `GET` | `/api/me` | Yes | fetch current user |
+| `POST` | `/api/logout` | Yes | client logout acknowledgement |
+
+### Room Routes
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/rooms` | Yes | create room |
+| `GET` | `/rooms` | Yes | list rooms for current user |
+| `GET` | `/rooms/:roomId` | Yes | get room details |
+| `PUT` | `/rooms/:roomId` | Yes | update room |
+| `DELETE` | `/rooms/:roomId` | Yes | archive room |
+| `GET` | `/rooms/:roomId/validate` | Yes | validate room membership |
+
+### Member Routes
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/rooms/:roomId/members` | Yes | list room members |
+| `POST` | `/rooms/:roomId/members` | Yes | invite member |
+| `PATCH` | `/rooms/:roomId/members/:memberId` | Yes | update member role |
+| `DELETE` | `/rooms/:roomId/members/:memberId` | Yes | remove member |
+
+### Canvas Routes
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/canvas/:roomId` | Yes | load nodes, edges, notes, file links |
+| `POST` | `/api/canvas/save` | Yes | save full canvas snapshot |
+| `POST` | `/api/canvas/load` | Yes | replace canvas with incoming payload |
+
+### Node, Edge, and Note Routes
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/nodes` | Yes | create node |
+| `GET` | `/api/nodes/:roomId` | Yes | get nodes in room |
+| `PUT` | `/api/nodes/:nodeId` | Yes | update node title or position |
+| `DELETE` | `/api/nodes/:nodeId` | Yes | delete node and linked graph data |
+| `POST` | `/api/edges` | Yes | create edge |
+| `DELETE` | `/api/edges/:edgeId` | Yes | delete edge |
+| `POST` | `/api/notes` | Yes | create note |
+| `PUT` | `/api/notes/:noteId` | Yes | update note |
+| `DELETE` | `/api/notes/:noteId` | Yes | delete note |
+
+### File and File-Link Routes
+
+| Method | Route | Auth in current code | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/files/upload` | No | create file or new file version |
+| `POST` | `/api/files/:fileId/version` | No | add file version |
+| `GET` | `/api/files/download/:fileId` | No | return file and versions |
+| `GET` | `/api/files/link/:fileId` | No | return file metadata and generated download URL |
+| `GET` | `/api/files/:fileId/content` | No | get latest file content |
+| `GET` | `/api/files/:fileId/versions` | No | get version list |
+| `GET` | `/api/files/room/:roomId` | No | list files in a room |
+| `GET` | `/api/files/:fileId` | No | get latest file content |
+| `DELETE` | `/api/files/:fileId` | No | soft delete file |
+| `POST` | `/api/files/link` | Yes | link file to node |
+| `GET` | `/api/files/node/:nodeId` | Yes | get file links for node |
+| `DELETE` | `/api/files/unlink` | Yes | unlink file from node |
+
+### History Route
+
+| Method | Route | Auth | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/history/:roomId` | Yes | room activity timeline |
+
+## Realtime Events
+
+Socket.IO is configured in `backend/src/server.js`.
+
+### Client to Server
+
+| Event | Payload |
+| --- | --- |
+| `presence-join` | `{ userId, roomId, userName }` |
+| `cursor-move` | `{ userId, roomId, x, y, userName }` |
+| `node-drag` | `{ roomId, nodeId, x, y }` |
+| `note-drag` | `{ roomId, noteId, x, y }` |
+
+### Server to Client
+
+| Event | Payload |
+| --- | --- |
+| `presence-update` | current room users |
+| `cursor-update` | remote cursor coordinates |
+| `cursor-remove` | disconnected cursor id |
+| `node-created` | created node document |
+| `node-updated` | updated node document |
+| `node-deleted` | `{ nodeId }` |
+| `edge-created` | created edge document |
+| `edge-deleted` | `{ edgeId }` |
+| `note-created` | created note document |
+| `note-updated` | updated note document |
+| `node-drag` | live node position |
+| `note-drag` | live note position |
+
+## Prerequisites
+
+Install the following before running the project:
+
+- Node.js 18 or later
+- npm
+- MongoDB instance, local or cloud
+
+## Installation and Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone <your-repo-url>
+cd DevRoom
+```
+
+### 2. Install Optional Root Dependencies
+
+The root `package.json` only exists for helper scripts such as Playwright checks.
+
+```bash
+npm install
+```
+
+### 3. Set Up the Backend
 
 ```bash
 cd backend
 npm install
-# add .env with MONGO_URI and JWT_SECRET
-npm run dev    # uses nodemon, runs src/server.js
 ```
 
-2. Frontend
+Create `backend/.env` with:
+
+```env
+MONGO_URI=mongodb://127.0.0.1:27017/devroom
+JWT_SECRET=replace_this_with_a_secure_secret
+PORT=5002
+```
+
+Start the backend:
+
+```bash
+npm run dev
+```
+
+The API server starts on `http://localhost:5002`.
+
+### 4. Set Up the Frontend
+
+Open a new terminal:
 
 ```bash
 cd frontend
 npm install
-npm run dev    # starts Vite dev server (likely http://localhost:5173)
+npm run dev
 ```
 
-Open the frontend app in a browser, register or login, create a room, and open the room workspace.
+The frontend starts on `http://localhost:5173`.
 
----
+### 5. Open the App
 
-**Backend**
+Visit:
 
-All backend routes are mounted with `/api` base (except rooms which use `/rooms`). The backend uses `verifyToken` middleware for protected endpoints.
+```text
+http://localhost:5173
+```
 
-Models are implemented using Mongoose and live under `backend/src/models/`.
+Register a new account, sign in, create a room, and begin using the workspace.
 
-**Models / Schemas**
+## Start-to-Finish User Flow
 
-- `CanvasNode` (backend/src/models/CanvasNode.js)
-  - roomId: ObjectId (Room)
-  - title: String
-  - type: String (frontend|backend|database|service|...)
-  - position: { x: Number, y: Number }
-  - width: Number
-  - height: Number
-  - createdBy: ObjectId (User)
-  - timestamps
+### 1. Register
 
-- `CanvasEdge` (backend/src/models/CanvasEdge.js)
-  - roomId: ObjectId
-  - sourceNodeId: ObjectId (CanvasNode)
-  - targetNodeId: ObjectId (CanvasNode)
-  - createdBy: ObjectId (User)
-  - timestamps
+- open the frontend
+- go to the registration screen
+- create an account with name, email, and password
 
-- `CanvasNote` (backend/src/models/CanvasNote.js)
-  - roomId: ObjectId
-  - text: String
-  - position: { x: Number, y: Number }
-  - createdBy: ObjectId (User)
-  - timestamps
+### 2. Login
 
-- `File` (backend/src/models/File.js)
-  - roomId, fileName, fileType, fileSize, filePath, uploadedBy, isDeleted, timestamps
+- sign in using the registered email and password
+- the JWT token is stored in local storage under `devroom_token`
 
-- `FileVersion` (backend/src/models/FileVersion.js)
-  - fileId, versionNumber, filePath, uploadedBy, changeNote, timestamps
+### 3. Create a Room
 
-- `FileNodeLink` (backend/src/models/FileNodeLink.js)
-  - nodeId, fileId, linkedBy, timestamps
+- use the sidebar `+` button or landing page CTA
+- enter room name and optional description
+- the logged-in user becomes room `owner`
 
-- `HistoryLog` (backend/src/models/HistoryLog.js)
-  - roomId, userId, actionType, message, entityId, timestamps
+### 4. Open the Workspace
 
-- `User`, `Room`, `RoomMember` models exist for auth and membership.
+The main workspace contains these tabs:
 
+- `Canvas`
+- `Overview`
+- `Files`
+- `Members`
+- `History`
 
-Controllers & Routes (main API endpoints)
+### 5. Use the Canvas
 
-- Canvas
-  - GET `/api/canvas/:roomId` — returns full canvas for a room: { nodes, edges, notes, fileLinks }
-  - POST `/api/canvas/save` — authoritative save endpoint; expects payload { roomId, nodes, edges, notes } and replaces existing canvas data for that room (protected)
-  - POST `/api/canvas/load` — loads an incoming canvas payload (replaces existing)
+- add predefined node templates such as frontend, backend, database, service, cache, queue, gateway, JWT generator, and note
+- drag nodes around the canvas
+- connect nodes using React Flow handles
+- save the full canvas using the `Save` button
+- use right-click delete actions or keyboard delete for selected items
+- move around the board with mini map and controls
 
-- Nodes
-  - POST `/api/nodes` — create a single CanvasNode (protected)
-    - body: { title, type, position, width, height, createdBy, roomId }
-    - response: { message, nodeId }
-  - GET `/api/nodes/:roomId` — get nodes for a room (protected)
-  - PUT `/api/nodes/:nodeId` — update node (position/title) (protected)
-  - DELETE `/api/nodes/:nodeId` — delete node (also deletes edges + file links) (protected)
+### 6. Manage Files
 
-- Edges
-  - POST `/api/edges` — create edge (protected)
-    - body: { sourceNodeId, targetNodeId, roomId, createdBy }
-    - response: { edgeId }
-  - DELETE `/api/edges/:edgeId` — delete edge
+- upload a file from the Files panel
+- optionally link the file to a specific node during upload
+- open a file in the editor modal
+- save updates as new versions
+- inspect version history for each file
 
-- Notes
-  - POST `/api/notes` — create CanvasNote (protected)
-    - body: { text, position, roomId, createdBy }
-    - response: { noteId }
-  - PUT `/api/notes/:noteId` — update note text/position (protected)
-  - DELETE `/api/notes/:noteId` — remove note
+### 7. Collaborate in Real Time
 
-- Files
-  - POST `/api/files/upload` — upload file / create file + version
-  - POST `/api/files/:fileId/version` — add a new version
-  - GET `/api/files/:roomId` — list files in a room (with optional search)
-  - GET `/api/files/link/:fileId` — get metadata and download URL for a file
-  - GET `/api/files/download/:fileId` — download file
-  - DELETE `/api/files/:fileId` — mark deleted
+- other users in the same room appear in the top bar
+- cursor movements are broadcast through Socket.IO
+- node and note updates are emitted to connected clients
 
-- File linking
-  - POST `/api/files/link` — create a FileNodeLink: { nodeId, fileId, linkedBy, roomId }
-  - GET `/api/files/node/:nodeId` — list file links for a node
-  - DELETE `/api/files/unlink` — body { linkId }
+### 8. Manage Members
 
-- Rooms & Members
-  - Routes under `/rooms` and `/rooms/:roomId` handle room creation and member invites (protected endpoints)
+- owners and editors can invite members by email
+- owners can change roles and remove members
+- new members immediately gain access to room data
 
-- Auth
-  - `/api/register`, `/api/login`, `/api/me`, etc. (protected endpoints use `verifyToken` middleware)
+### 9. Review History
 
+- open the History tab
+- inspect room actions such as node creation, edge creation, note updates, file linking, and canvas save operations
 
-Canvas Save Behavior (important)
+## Frontend Implementation Notes
 
-The `saveFullCanvas` controller replaces the current canvas for the room by:
-1. Deleting existing CanvasNode, CanvasEdge, CanvasNote for the room.
-2. Inserting the provided `nodes` array via `CanvasNode.insertMany`. The controller expects each node item to contain a `tempShapeId` (front-end temporary id) and other fields; it strips `tempShapeId` and inserts the rest into the collection.
-3. After insertMany returns, the controller constructs a `shapeIdMap` that maps each front-end `tempShapeId` value to the newly created Mongo `_id` assigned by insertMany (mapping by the original `nodes` array index => savedNodes[index]._id).
-4. Edges received in the payload should include `sourceTempId` / `targetTempId` and optional `sourcePoint` / `targetPoint`. The controller attempts to map source/target using `shapeIdMap`. If mapping fails, a proximity heuristic (distance < 150 pixels) is used to find the nearest saved node.
-5. Valid mapped edges are written via `CanvasEdge.insertMany`.
-6. Notes in the payload are inserted to `CanvasNote.insertMany` (notes are treated as separate documents).
+- `AuthContext` handles `login`, `register`, and `logout`
+- `AuthContext` does not auto-restore the user from an old token on page refresh
+- `RoomContext` loads rooms after successful login
+- `RoomWorkspace` opens tabs and creates the shared socket connection for presence
+- `ReactFlowCanvas` is the active canvas used in the app
+- `TldrawCanvas.jsx` still exists in the repo as legacy code, but the workspace currently renders React Flow
+- `frontend/src/services/api.js` uses hard-coded backend URLs pointing at `http://localhost:5002`
 
-Important payload shape for `/api/canvas/save`:
+## Backend Implementation Notes
+
+- the backend connects to MongoDB through `MONGO_URI`
+- JWT verification reads `Authorization: Bearer <token>`
+- rooms are protected with membership checks
+- room deletion is a soft delete implemented through `isArchived`
+- full canvas save replaces the room's previous canvas data
+- edge saving uses a temp-id mapping strategy and a proximity fallback
+- history is written during many create, update, delete, and save actions
+- Socket.IO uses a memory-based presence map, so presence is not persisted across server restarts
+
+## Canvas Save Format
+
+The full save endpoint expects a payload similar to:
 
 ```json
 {
-  "roomId": "<roomId>",
+  "roomId": "ROOM_ID",
   "nodes": [
-    { "tempShapeId": "shape:temp_123", "title": "API", "type": "backend", "position": { "x": 120, "y": 80 }, "width": 160, "height": 80, "createdBy": "<userId>", "roomId": "<roomId>" }
+    {
+      "tempShapeId": "shape:temp_123",
+      "title": "API Gateway",
+      "type": "gateway",
+      "position": { "x": 160, "y": 120 },
+      "width": 160,
+      "height": 80,
+      "createdBy": "USER_ID",
+      "roomId": "ROOM_ID"
+    }
   ],
   "edges": [
-    { "sourceTempId": "shape:temp_123", "targetTempId": "shape:temp_456", "sourcePoint": { "x": 120, "y": 80 }, "targetPoint": { "x": 200, "y": 80 }, "createdBy": "<userId>" }
+    {
+      "sourceTempId": "shape:temp_123",
+      "targetTempId": "shape:temp_456",
+      "sourcePoint": { "x": 160, "y": 120 },
+      "targetPoint": { "x": 400, "y": 120 },
+      "createdBy": "USER_ID"
+    }
   ],
   "notes": [
-    { "text": "This is a sticky note", "position": { "x": 240, "y": 180 }, "createdBy": "<userId>", "roomId": "<roomId>" }
+    {
+      "_id": "NOTE_ID",
+      "text": "Remember to cache token validation",
+      "position": { "x": 260, "y": 240 },
+      "createdBy": "USER_ID",
+      "roomId": "ROOM_ID"
+    }
   ]
 }
 ```
 
-If your frontend sends notes as part of the `nodes` array (instead of the top-level `notes` array), the controller will treat them as CanvasNode documents and notes will not be persisted as `CanvasNote` documents — this is a common source of mismatch with the schema.
+## Manual Testing and Helper Scripts
 
-**Authentication**
+The repository includes helper scripts under `scripts/`.
 
-- Most APIs are protected with `verifyToken`. The frontend `services/api.js` sets up an axios interceptor to attach the `Authorization: Bearer <token>` header where `devroom_token` is stored in localStorage.
+### API Smoke Test
 
-**History**
-
-- Controllers log important actions to `HistoryLog` documents (create, update, delete actions for nodes/edges/notes/files). The `getHistory` endpoint returns logs for a room.
-
----
-
-**Frontend**
-
-Project layout (key files & folders):
-
-- `frontend/src/main.jsx` — app bootstrap
-- `frontend/src/App.jsx` — top-level app routes and layout
-- `frontend/index.html` — Vite HTML template
-- `frontend/src/assets/` — static assets
-- `frontend/src/components/` — UI components grouped by feature
-  - `Auth/` — `LoginPage.jsx`, `RegisterPage.jsx`
-  - `Canvas/` — `TldrawCanvas.jsx` (legacy), `ReactFlowCanvas.jsx` (prototype)
-  - `Layout/` — `RoomWorkspace.jsx` (workspace layout, includes canvas and panels)
-  - `Panels/` — `FilesPanel.jsx`, `HistoryPanel.jsx`, `MembersPanel.jsx`, `OverviewPanel.jsx`
-  - `Sidebar/` — `CreateRoomModal.jsx`, `SideBar.jsx`, `TemplateSidebar.jsx` (templates toolbar)
-- `frontend/src/context/` — `AuthContext.jsx`, `RoomContext.jsx` — authentication and active room state
-- `frontend/src/services/api.js` — central axios API client and route wrappers
-- `frontend/src/templates/nodeTemplates.js` — available node templates (service, database, note, etc.)
-- `frontend/src/hooks/useToast.jsx` — small toast helper
-
-
-Key frontend behaviors
-
-- Authentication flow
-  - Login/Register pages post credentials to the backend and store the returned JWT in localStorage under `devroom_token` used by the API client.
-  - `AuthContext` exposes `user` and token state to components.
-
-- Room selection and workspace
-  - `RoomWorkspace.jsx` holds the canvas and panels. It provides the `roomId` and `userId` props to the canvas components and toggles between `TldrawCanvas` and `ReactFlowCanvas` (migration path).
-
-- `services/api.js`
-  - Exposes convenient functions for all backend endpoints (e.g., `createNode`, `updateNode`, `getCanvas`, `saveCanvas`, `createNote`, `updateNote`, `uploadFile`, `linkFileToNode`, `getNodeFiles`, etc.)
-  - Axios interceptor injects Authorization using `devroom_token` from localStorage.
-
-- ReactFlowCanvas (current prototype)
-  - Loads canvas via `getCanvas(roomId)` and maps backend node/edge/note documents to React Flow `nodes` and `edges`.
-  - Node creation: when the user drags a template into the canvas or clicks a template, a temporary node is created client-side with a `temp` id like `shape:temp_...`, and an API call is made:
-    - For regular nodes: `POST /api/nodes` to create a `CanvasNode`; the UI replaces the temp id with `shape:<DB_ID>` on success.
-    - For notes: `POST /api/notes` to create `CanvasNote` and the client replaces the temp id with `note:<DB_ID>`.
-  - Note editing: notes are rendered using an editable `NoteNode` component. On blur the frontend calls `PUT /api/notes/:noteId` to update text. Dragging a note persists its `position` via `PUT /api/notes/:noteId`.
-  - Edge creation: on connect the client attempts to call `POST /api/edges` when both endpoints are already persisted (DB ids). Otherwise it falls back to saving the full canvas via `/api/canvas/save` which runs the mapping logic server-side.
-  - Save button triggers a canvas save that separates normal nodes and notes: nodes are sent as `nodes` (with `tempShapeId`), notes are sent top-level as `notes` array. Edges connecting to notes are excluded because edges target CanvasNode ids.
-  - Cursor / presence: the client connects to Socket.IO and emits `presence-join` and `cursor-move` events. Cursor overlay displays remote cursors, and presence is shown in the room.
-  - Realtime: the canvas listens for server-emitted events and updates state on `node-created`, `node-updated`, `node-deleted`, `edge-created`, `edge-deleted`, `note-created`, and `note-updated`.
-
-- FilesPanel
-  - Upload flow posts to `POST /api/files/upload` and then optionally links the uploaded file to a selected node using `POST /api/files/link`.
-  - On node hover, the canvas queries `GET /api/files/node/:nodeId` and shows linked file names as a tooltip; clicking a file navigates to the Files panel.
-
-
-**Realtime (Socket.IO) events**
-
-Server-side socket handling is in `backend/src/server.js`. The server holds a `roomUsers` in-memory map for presence and allows clients to join a room for presence and cursor broadcast.
-
-Important events and payloads:
-
-- Client -> Server
-  - `presence-join` { userId, roomId, userName }
-  - `cursor-move` { userId, roomId, x, y, userName }
-
-- Server -> Clients
-  - `presence-update` — array of current users in the room
-  - `cursor-update` { socketId, userId, roomId, x, y, userName }
-  - `cursor-remove` { socketId }
-  - `node-created` — emitted when node created via API (payload: node document)
-  - `node-updated` — emitted when node updated (payload: node document)
-  - `node-deleted` — { nodeId }
-  - `edge-created` — payload: edge document
-  - `edge-deleted` — { edgeId }
-  - `note-created` — payload: note document
-  - `note-updated` — payload: updated note document
-
-Controllers use `global.io.to(roomId).emit(...)` to broadcast events. Clients must join the room (via `socket.join(roomId)` under `presence-join` or via `cursor-move` logic) for events to be received.
-
-
-**Example flows & payloads**
-
-1. Create a node (client uses `createNode` API):
-
-Request:
-
-POST `/api/nodes`
-Headers: `Authorization: Bearer <token>`
-Body:
-
-```json
-{
-  "title": "Auth Service",
-  "type": "service",
-  "position": { "x": 160, "y": 120 },
-  "width": 160,
-  "height": 80,
-  "createdBy": "<userId>",
-  "roomId": "<roomId>"
-}
+```bash
+node scripts/apiTest.js
 ```
 
-Response:
+Registers a temporary user and checks login.
 
-```json
-{ "message": "Node created successfully", "nodeId": "<nodeId>" }
+### Canvas Save Test
+
+```bash
+node scripts/canvasEdgeTest.mjs
 ```
 
-2. Create a note:
+Creates a room, saves sample nodes and edges, then fetches the canvas.
 
-POST `/api/notes` body: { text, position, roomId, createdBy }
-Response: { noteId }
+### Browser and Playwright Checks
 
-3. Save full canvas:
+```bash
+node scripts/browserTest.mjs
+node scripts/playwrightEdgeDebug.mjs
+```
 
-POST `/api/canvas/save` body: { roomId, nodes: [...], edges: [...], notes: [...] }
-- Notes must be top-level `notes` array as CanvasNote objects.
-- Nodes must include `tempShapeId` so server can map the inserted Mongo IDs back to client temp ids.
+These scripts were written during earlier canvas work. Some of them still reference older Tldraw behavior, so treat them as development utilities rather than guaranteed production-grade tests.
 
-4. Link file to node:
+## Configuration Notes
 
-POST `/api/files/link` body: { nodeId, fileId, linkedBy, roomId }
+These values are currently hard-coded in the codebase:
 
+- backend REST base URL: `frontend/src/services/api.js`
+- backend socket URL: `frontend/src/components/Layout/RoomWorkspace.jsx`
+- canvas socket URL: `frontend/src/components/Canvas/ReactFlowCanvas.jsx`
+- allowed Socket.IO and CORS origins: `backend/src/server.js`
 
-**Troubleshooting & common pitfalls**
+If you deploy the project to a different host or port, update those files or refactor them to use environment variables.
 
-- Notes being saved incorrectly: ensure the frontend sends note content in the top-level `notes` array when calling `/api/canvas/save`. The server inserts `CanvasNote.insertMany(notes)`. If your frontend includes note nodes in `nodes` instead, the server will create `CanvasNode` documents (wrong schema) and not use `CanvasNote`.
+## Known Limitations
 
-- Empty note text errors on create: server's `createNote` requires `text` and `roomId`. When creating notes from the client, send an initial non-empty text (e.g., "New note") or call `POST /api/notes` after the note has text.
+- file routes under `/api/files/*` are not protected by JWT middleware in the current backend implementation
+- the frontend does not automatically restore the logged-in user after a page refresh, even if a token is still present
+- the note template path currently tries to create empty notes, while the backend requires non-empty note text
+- presence is stored in memory and is lost when the backend restarts
+- helper test scripts are partly based on older canvas behavior
+- there is no Docker, CI pipeline, or `.env.example` file in the current repository
 
-- Realtime events not appearing in other clients: confirm that clients emit `presence-join` or `cursor-move` to join the Socket.IO room and that the server's allowed CORS origins include your frontend origin (server includes `http://localhost:5173` and `http://localhost:5174`). Also confirm that `global.io` exists (server sets it in `server.js`) and controllers are emitting events.
+## Suggested Improvements
 
-- Edge mapping on full save: server maps edges using `sourceTempId` / `targetTempId` and falls back to proximity mapping (distance threshold = 150). If edges are mapped incorrectly, make sure temp IDs were provided and positions are accurate for the proximity match.
+- move frontend and backend base URLs into environment variables
+- add authentication middleware to file routes
+- fix empty-note creation flow in React Flow
+- restore session state from stored JWT on refresh
+- add automated API and end-to-end test coverage
+- introduce Docker and environment templates
+- persist richer audit metadata for history entries
 
-- Token/auth issues: API endpoints require a valid JWT. `services/api.js` automatically sets the `Authorization` header when `devroom_token` is present in localStorage.
+## Deliverables Added in This Repository
 
+- `README.md`: complete end-to-end project documentation
+- `DevRoom_IEEE_Paper.tex`: IEEE-style LaTeX source for a research/project paper based on this project
 
-**Development notes & next steps**
+## Troubleshooting
 
-- The project contains both `TldrawCanvas.jsx` (legacy) and `ReactFlowCanvas.jsx` (migration). The React Flow prototype already supports: node creation, note nodes (with inline edit), file link tooltips, cursor overlay and persistence endpoints. Remaining tasks include polishing real-time sync edge-cases and replacing all legacy tldraw code once React Flow is fully feature-complete.
+### Backend fails to start
 
-- TODO highlights:
-  - Finalize note editing UX and optimistic update flow (save-on-blur already implemented in prototype but can be improved).
-  - Ensure all edge creation paths emit `edge-created` with the correct DB ids.
-  - Add E2E tests for two-client realtime flows.
+Check:
 
+- MongoDB is running
+- `backend/.env` exists
+- `MONGO_URI` is valid
+- `JWT_SECRET` is set
 
-**Where to look in the repo**
+### Frontend cannot reach backend
 
-- Backend APIs: `backend/src/controllers/` and routes in `backend/src/routes/`
-- Models: `backend/src/models/` (CanvasNode, CanvasEdge, CanvasNote, File, FileVersion, FileNodeLink, HistoryLog)
-- Realtime socket server: `backend/src/server.js`
-- Frontend components: `frontend/src/components/`
-- API client: `frontend/src/services/api.js`
-- React Flow canvas prototype: `frontend/src/components/Canvas/ReactFlowCanvas.jsx`
-- Legacy tldraw canvas: `frontend/src/components/Canvas/TldrawCanvas.jsx`
+Check:
+
+- backend is running on port `5002`
+- frontend is running on port `5173`
+- the hard-coded URLs in `frontend/src/services/api.js` still match your environment
+
+### Realtime presence is not visible
+
+Check:
+
+- Socket.IO server is running with the backend
+- both users joined the same room
+- your frontend origin is allowed in `backend/src/server.js`
+
+### Room actions return authorization errors
+
+Check:
+
+- you are logged in
+- `devroom_token` exists in local storage
+- your member role allows the attempted action
+
+## Conclusion
+
+DevRoom is a solid full-stack prototype for collaborative architecture planning and lightweight project documentation. The current codebase already covers authentication, room management, collaborative canvas editing, file versioning, realtime presence, and history tracking. The next step is to harden configuration, security, and automated testing so the project can move from prototype quality to production readiness.

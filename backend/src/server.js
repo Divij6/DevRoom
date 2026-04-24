@@ -24,7 +24,7 @@ const server = http.createServer(app);
 
 const io = new SocketIOServer(server, {
   cors: {
-    origin: ["http://localhost:5173", "http://localhost:5174"],
+    origin: ["http://localhost:5173", "http://localhost:5174","http://10.120.118.157:5173/"],
     credentials: true,
   },
 });
@@ -36,7 +36,7 @@ global.io = io;
 const roomUsers = new Map();
 
 // Middleware
-app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174","http://192.168.1.3:5173"], credentials: true }));
+app.use(cors({ origin: ["http://localhost:5173", "http://localhost:5174","http://192.168.1.3:5173","http://10.120.118.157:5173/"], credentials: true }));
 app.use(express.json());
 
 // DB
