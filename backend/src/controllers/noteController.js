@@ -14,17 +14,23 @@ export const createNote = async (req, res) => {
       createdBy
     } = req.body;
 
-    if (!text || !roomId) {
+    if (!roomId) {
       return res.status(400).json({
-        message: "Text and RoomId required"
+        message: "RoomId required"
       });
     }
 
+    const noteText = typeof text === "string"
+      ? text
+      : "";
+
+    const noteCreator = createdBy || req.user?.userId;
+
     const note = new CanvasNote({
-      text,
+      text: noteText,
       position,
       roomId,
-      createdBy
+      createdBy: noteCreator
     });
 
     await note.save();
@@ -33,7 +39,7 @@ export const createNote = async (req, res) => {
     try {
       await HistoryLog.create({
         roomId,
-        userId: createdBy,
+        userId: noteCreator,
         actionType: "CREATE_NOTE",
         message: "Note created",
         entityId: note._id
